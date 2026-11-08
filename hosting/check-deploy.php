@@ -129,12 +129,15 @@ $checks[] = result_row('cURL', extension_loaded('curl'), extension_loaded('curl'
 $checks[] = result_row('ZipArchive', class_exists('ZipArchive'), class_exists('ZipArchive') ? 'Расширение включено.' : 'Нужно включить PHP ZipArchive у хостинга.');
 $checks[] = result_row('Хеш пароля', true, 'Хеш распознан; пароль был проверен при входе.');
 $checks[] = result_row('PAT для приватного GitHub', isset($config['github_token']) && is_string($config['github_token']) && $config['github_token'] !== '', 'Значение токена не отображается.');
-$writeProbe = @tempnam($privateDirectory, '.surkove-check-');
-$privateWritable = is_string($writeProbe) && $writeProbe !== '';
-if ($privateWritable) {
+$temporaryBase = sys_get_temp_dir();
+$writeProbe = is_dir($temporaryBase) && !is_link($temporaryBase)
+    ? @tempnam($temporaryBase, '.surkove-check-')
+    : false;
+$temporaryWritable = is_string($writeProbe) && $writeProbe !== '';
+if ($temporaryWritable) {
     @unlink($writeProbe);
 }
-$checks[] = result_row('Запись в private', $privateWritable, $privateWritable ? 'Пробный файл создан и удалён.' : 'PHP не может писать в private; попросите Majordomo исправить доступ для PHP.');
+$checks[] = result_row('Временная папка PHP', $temporaryWritable, $temporaryWritable ? 'Пробный файл создан и удалён.' : 'PHP не может создавать служебные файлы во временной папке хостинга.');
 $checks[] = result_row('mod_rewrite подтверждён', ($config['apache_rewrite_confirmed'] ?? false) === true, ($config['apache_rewrite_confirmed'] ?? false) === true ? 'В конфиге включено подтверждение.' : 'Подтвердите поддержку у Majordomo и выставьте флаг в конфиге.');
 
 $latestSha = '';

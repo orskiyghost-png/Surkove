@@ -127,6 +127,28 @@ function read_private_json(string $path): array
     }
 }
 
+function runtime_directory(string $webRoot): string
+{
+    $base = sys_get_temp_dir();
+    $webRootReal = realpath($webRoot);
+    if ($webRootReal === false || $base === '' || !is_dir($base) || is_link($base)) {
+        throw new RuntimeException('Не удалось определить безопасный временный каталог PHP.');
+    }
+    $path = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'surkove-deploy-' . hash('sha256', $webRootReal);
+    if (!is_dir($path) && !@mkdir($path, 0700) && !is_dir($path)) {
+        throw new RuntimeException('PHP не может создать служебный каталог во временной папке хостинга.');
+    }
+    if (is_link($path) || !is_dir($path) || !is_writable($path)) {
+        throw new RuntimeException('Служебный временный каталог PHP недоступен для записи.');
+    }
+    $realPath = realpath($path);
+    if ($realPath === false || dirname($realPath) !== realpath($base)) {
+        throw new RuntimeException('Небезопасный путь временного каталога PHP.');
+    }
+    @chmod($realPath, 0700);
+    return $realPath;
+}
+
 function login_attempt_count(string $directory, string $ip, string $pepper, bool $failed = false, bool $clear = false): int
 {
     $path = $directory . '/.deploy-login-limits.json';
@@ -135,7 +157,7 @@ function login_attempt_count(string $directory, string $ip, string $pepper, bool
         if (is_resource($handle)) {
             fclose($handle);
         }
-        throw new RuntimeException('Ограничитель входа недоступен. Проверьте права каталога private.');
+        throw new RuntimeException('Ограничитель попыток входа недоступен во временном каталоге PHP.');
     }
     @chmod($path, 0600);
     try {
@@ -732,7 +754,7 @@ function activate_release(string $webRoot, string $sha): void
     write_active_htaccess($webRoot, $sha);
 }
 
-function extract_release(array $config, string $webRoot, string $privateDirectory, string $sha): void
+function extract_release(array $config, string $webRoot, string $runtimeDirectory, string $sha): void
 {
     if (!extension_loaded('curl') || !class_exists('ZipArchive')) {
         throw new RuntimeException('Для загрузки нужны PHP cURL и ZipArchive.');
@@ -746,10 +768,10 @@ function extract_release(array $config, string $webRoot, string $privateDirector
     if (!mkdir($stage, 0700)) {
         throw new RuntimeException('Не удалось создать временный каталог релиза.');
     }
-    $archivePath = tempnam($privateDirectory, '.surkove-zip-');
+    $archivePath = tempnam($runtimeDirectory, '.surkove-zip-');
     if ($archivePath === false) {
         delete_tree($stage);
-        throw new RuntimeException('Не удалось создать временный файл ZIP в private.');
+        throw new RuntimeException('Не удалось создать временный файл ZIP в каталоге PHP.');
     }
     try {
         download_zip($config, $sha, $archivePath);
@@ -771,9 +793,9 @@ function extract_release(array $config, string $webRoot, string $privateDirector
     }
 }
 
-function operation_lock(string $privateDirectory)
+function operation_lock(string $runtimeDirectory)
 {
-    $path = $privateDirectory . '/.deploy-operation.lock';
+    $path = $runtimeDirectory . '/.deploy-operation.lock';
     $handle = @fopen($path, 'c');
     if ($handle === false || !flock($handle, LOCK_EX | LOCK_NB)) {
         if (is_resource($handle)) {
@@ -785,9 +807,9 @@ function operation_lock(string $privateDirectory)
     return $handle;
 }
 
-function save_operation_result(string $privateDirectory, string $action, bool $success, string $sha, string $message): void
+function save_operation_result(string $runtimeDirectory, string $action, bool $success, string $sha, string $message): void
 {
-    private_json_write($privateDirectory . '/deploy-state.json', [
+    private_json_write($runtimeDirectory . '/deploy-state.json', [
         'action' => $action,
         'success' => $success,
         'sha' => $sha,
@@ -796,14 +818,14 @@ function save_operation_result(string $privateDirectory, string $action, bool $s
     ]);
 }
 
-function install_latest(array $config, string $webRoot, string $privateDirectory): string
+function install_latest(array $config, string $webRoot, string $runtimeDirectory): string
 {
     if (!$config['apache_rewrite_confirmed']) {
         throw new RuntimeException('Сначала подтвердите у Majordomo поддержку Apache mod_rewrite и разрешение RewriteRule в .htaccess.');
     }
     $sha = latest_commit_sha($config);
     if (release_marker($webRoot . '/releases/' . $sha, $sha) === null) {
-        extract_release($config, $webRoot, $privateDirectory, $sha);
+        extract_release($config, $webRoot, $runtimeDirectory, $sha);
     }
     activate_release($webRoot, $sha);
     cleanup_releases($webRoot, $sha);
@@ -840,6 +862,11 @@ try {
 } catch (Throwable $error) {
     show_setup_error($error->getMessage());
 }
+try {
+    $runtimeDirectory = runtime_directory($webRoot);
+} catch (Throwable $error) {
+    show_setup_error($error->getMessage());
+}
 
 if (isset($_SESSION['authenticated'], $_SESSION['last_activity'])
     && $_SESSION['authenticated'] === true
@@ -860,19 +887,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $ip = is_string($_SERVER['REMOTE_ADDR'] ?? null) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
             $pepper = hash('sha256', $config['panel_password_hash']);
-            $attempts = login_attempt_count($privateDirectory, $ip, $pepper);
+            $attempts = login_attempt_count($runtimeDirectory, $ip, $pepper);
             $password = is_string($_POST['password'] ?? null) ? $_POST['password'] : '';
             if ($attempts >= 5) {
                 $_SESSION['flash'] = ['error', 'Слишком много попыток. Попробуйте позже.'];
             } elseif (password_verify($password, $config['panel_password_hash'])) {
-                login_attempt_count($privateDirectory, $ip, $pepper, false, true);
+                login_attempt_count($runtimeDirectory, $ip, $pepper, false, true);
                 session_regenerate_id(true);
                 $_SESSION['authenticated'] = true;
                 $_SESSION['last_activity'] = time();
                 $_SESSION['csrf'] = bin2hex(random_bytes(32));
                 $_SESSION['flash'] = ['success', 'Вход выполнен.'];
             } else {
-                login_attempt_count($privateDirectory, $ip, $pepper, true);
+                login_attempt_count($runtimeDirectory, $ip, $pepper, true);
                 $_SESSION['flash'] = ['error', 'Неверный пароль или временно ограничен вход.'];
             }
         } catch (Throwable $error) {
@@ -896,9 +923,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lock = null;
         $sha = '';
         try {
-            $lock = operation_lock($privateDirectory);
+            $lock = operation_lock($runtimeDirectory);
             if ($action === 'install') {
-                $sha = install_latest($config, $webRoot, $privateDirectory);
+                $sha = install_latest($config, $webRoot, $runtimeDirectory);
                 $message = 'Релиз установлен и активирован.';
             } else {
                 $requestedSha = is_string($_POST['sha'] ?? null) ? strtolower($_POST['sha']) : '';
@@ -906,14 +933,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message = 'Выбранная сохранённая версия активирована.';
             }
             try {
-                save_operation_result($privateDirectory, $action, true, $sha, $message);
+                save_operation_result($runtimeDirectory, $action, true, $sha, $message);
             } catch (Throwable) {
             }
             $_SESSION['flash'] = ['success', $message . ' SHA: ' . $sha];
         } catch (Throwable $error) {
             $message = $error->getMessage();
             try {
-                save_operation_result($privateDirectory, $action, false, $sha, $message);
+                save_operation_result($runtimeDirectory, $action, false, $sha, $message);
             } catch (Throwable) {
             }
             $_SESSION['flash'] = ['error', $message];
@@ -949,7 +976,7 @@ if (!$authenticated) {
 $_SESSION['last_activity'] = time();
 $currentSha = active_sha($webRoot);
 $releases = release_list($webRoot);
-$state = read_private_json($privateDirectory . '/deploy-state.json');
+$state = read_private_json($runtimeDirectory . '/deploy-state.json');
 $githubStatus = 'Не проверен';
 $latestSha = '';
 $zipStatus = 'Не проверен';
