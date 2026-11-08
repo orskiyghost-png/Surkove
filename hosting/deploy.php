@@ -178,8 +178,11 @@ function login_attempt_count(string $directory, string $ip, string $pepper, bool
 
 function validate_config(array $config): void
 {
-    foreach (['github_owner', 'github_repository', 'deploy_branch', 'github_token', 'panel_password_hash'] as $key) {
+    foreach (['github_owner', 'github_repository', 'deploy_branch', 'github_token', 'panel_password_hash', 'apache_rewrite_confirmed'] as $key) {
         if (!isset($config[$key]) || !is_string($config[$key])) {
+            if ($key === 'apache_rewrite_confirmed' && isset($config[$key]) && is_bool($config[$key])) {
+                continue;
+            }
             throw new RuntimeException('В конфигурации отсутствует обязательное текстовое поле: ' . $key . '.');
         }
     }
@@ -193,6 +196,9 @@ function validate_config(array $config): void
     }
     if (str_contains($config['github_token'], "\r") || str_contains($config['github_token'], "\n")) {
         throw new RuntimeException('Некорректное значение GitHub token.');
+    }
+    if (!is_bool($config['apache_rewrite_confirmed'])) {
+        throw new RuntimeException('apache_rewrite_confirmed должен быть true или false.');
     }
     if ($config['panel_password_hash'] === '' || password_get_info($config['panel_password_hash'])['algo'] === null) {
         throw new RuntimeException('Укажите хеш пароля панели, созданный функцией password_hash().');
@@ -792,6 +798,9 @@ function save_operation_result(string $privateDirectory, string $action, bool $s
 
 function install_latest(array $config, string $webRoot, string $privateDirectory): string
 {
+    if (!$config['apache_rewrite_confirmed']) {
+        throw new RuntimeException('Сначала подтвердите у Majordomo поддержку Apache mod_rewrite и разрешение RewriteRule в .htaccess.');
+    }
     $sha = latest_commit_sha($config);
     if (release_marker($webRoot . '/releases/' . $sha, $sha) === null) {
         extract_release($config, $webRoot, $privateDirectory, $sha);
@@ -801,8 +810,11 @@ function install_latest(array $config, string $webRoot, string $privateDirectory
     return $sha;
 }
 
-function perform_rollback(string $webRoot, string $sha): string
+function perform_rollback(array $config, string $webRoot, string $sha): string
 {
+    if (!$config['apache_rewrite_confirmed']) {
+        throw new RuntimeException('Перед переключением подтвердите у Majordomo поддержку Apache mod_rewrite.');
+    }
     if (!preg_match('/\A[a-f0-9]{40}\z/', $sha)) {
         throw new RuntimeException('Некорректный SHA выбранного релиза.');
     }
@@ -895,7 +907,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message = 'Релиз установлен и активирован.';
             } else {
                 $requestedSha = is_string($_POST['sha'] ?? null) ? strtolower($_POST['sha']) : '';
-                $sha = perform_rollback($webRoot, $requestedSha);
+                $sha = perform_rollback($config, $webRoot, $requestedSha);
                 $message = 'Выбранная сохранённая версия активирована.';
             }
             try {
@@ -971,8 +983,9 @@ $content .= '<section class="panel"><p class="eyebrow">Состояние</p><h1
     . '<div class="row"><span>Последний commit ветки deploy</span><span class="value sha">' . escape_html($latestText) . '</span></div>'
     . '<div class="row"><span>ZIP-сборка</span><span class="value">' . escape_html($zipStatus) . '</span></div>'
     . '<div class="row"><span>PHP-расширение</span><span class="value">' . escape_html($zipExtensionStatus) . '</span></div>'
+    . '<div class="row"><span>Apache mod_rewrite</span><span class="value">' . ($config['apache_rewrite_confirmed'] ? 'Поддержка подтверждена' : 'Требуется подтверждение у Majordomo') . '</span></div>'
     . '<div class="row"><span>Установленная версия</span><span class="value sha">' . escape_html($currentText) . '</span></div>';
-$canInstall = $latestSha !== '' && $zipStatus === 'ZIP доступен для этого commit.' && class_exists('ZipArchive');
+$canInstall = $config['apache_rewrite_confirmed'] && $latestSha !== '' && $zipStatus === 'ZIP доступен для этого commit.' && class_exists('ZipArchive');
 $content .= '<form method="post" action="deploy.php">' . csrf_input() . '<input type="hidden" name="action" value="install">'
     . '<div class="actions"><button type="submit"' . ($canInstall ? '' : ' disabled') . '>Установить / обновить</button></div></form></section>';
 
@@ -987,7 +1000,7 @@ if ($releases === []) {
         $content .= '<div class="release"><span class="sha">' . $sha . '</span>' . escape_html($active) . '<div class="muted">' . $installed . '</div></div>';
     }
     $rollbackChoices = array_values(array_filter($releases, static fn(array $release): bool => $release['sha'] !== $currentSha));
-    if ($rollbackChoices !== []) {
+    if ($rollbackChoices !== [] && $config['apache_rewrite_confirmed']) {
         $content .= '<form method="post" action="deploy.php">' . csrf_input() . '<input type="hidden" name="action" value="rollback">'
             . '<label for="release-sha">Откатить на сохранённую версию</label><select id="release-sha" name="sha" required>';
         foreach ($rollbackChoices as $release) {

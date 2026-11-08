@@ -7,4 +7,5 @@ return [
     'deploy_branch' => 'deploy',
     'github_token' => '',
     'panel_password_hash' => '',
+    'apache_rewrite_confirmed' => false,
 ];
