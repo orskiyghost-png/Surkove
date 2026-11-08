@@ -1,0 +1,32 @@
+# Первоначальная установка Majordomo
+
+Сначала проверьте, что на тарифе включены Apache 2.4 `mod_rewrite`, разрешён `RewriteRule` в `.htaccess`, а для PHP 8.3 доступны расширения cURL и ZipArchive. Из Codespace настройки Apache проверить нельзя. До установки релиза `.htaccess` сохраняет доступ к `deploy.php`; активные версии обслуживаются только через Apache Rewrite.
+
+## Подготовка приватного GitHub-доступа
+
+Репозиторий `orskiyghost-png/Surkove` приватный, поэтому панели нужен Fine-grained Personal Access Token. Создайте токен только для этого репозитория и оставьте для Contents разрешение `Read-only` (Metadata: Read-only предоставляется GitHub автоматически). Не используйте PAT в GitHub Actions.
+
+В Codespace скопируйте `LOCAL_ONLY_DO_NOT_COMMIT/deploy-config.php` в приватную папку Majordomo и внесите PAT в поле `github_token`. В файле хранится только хеш пароля панели. Не загружайте этот файл в `www` и не добавляйте его в Git.
+
+## Загрузка через файловый менеджер
+
+Загрузите ровно три файла:
+
+| Файл в Codespace | Путь на Majordomo |
+| --- | --- |
+| `hosting/deploy.php` | `www/deploy.php` |
+| `hosting/.htaccess` | `www/.htaccess` |
+| `LOCAL_ONLY_DO_NOT_COMMIT/deploy-config.php` | `private/deploy-config.php` (соседняя с `www` папка, вне webroot) |
+
+Права: каталог `private` — `700`; `private/deploy-config.php` — `600`; `www/deploy.php` и `www/.htaccess` — `644`. Папка `www/releases` будет создана панелью. Конфигурация содержит доступ к приватному GitHub-репозиторию и не должна находиться в `www`.
+
+## Установка и управление
+
+1. Дождитесь успешного GitHub Actions workflow и появления ветки `deploy`.
+2. Откройте `https://surkove.ru/deploy.php`, войдите паролем панели и проверьте статус GitHub, commit SHA и доступность ZIP.
+3. Нажмите «Установить / обновить» только когда будете готовы активировать сборку.
+4. Для возврата выберите сохранённый SHA и нажмите «Откатить». Панель хранит максимум пять релизов.
+
+Каждый push в `main` собирает сайт и полностью заменяет содержимое ветки `deploy`; он не меняет файлы на Majordomo. Production-версия меняется только после нажатия кнопки в панели. `/deploy.php` и `/.well-known/` исключены из правил переключения.
+
+Если `mod_rewrite` или `AllowOverride` недоступны на аккаунте, не запускайте установку: переключение релизов этим способом не сработает. Сначала запросите у Majordomo подтверждение поддержки. Codespace не имеет доступа к настройкам аккаунта и не может проверить это удалённо.

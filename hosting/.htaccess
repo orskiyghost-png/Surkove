@@ -1,0 +1,7 @@
+# Initial rules. deploy.php remains available before and after the first release.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^deploy\.php$ - [END,NC]
+    RewriteRule ^\.well-known(?:/|$) - [END]
+    RewriteRule ^releases(?:/|$) - [F,END,NC]
+</IfModule>
