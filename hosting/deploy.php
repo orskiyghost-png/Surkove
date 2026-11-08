@@ -841,11 +841,6 @@ try {
     show_setup_error($error->getMessage());
 }
 
-$configPermissions = @fileperms($configPath);
-if (is_int($configPermissions) && ($configPermissions & 0077) !== 0) {
-    show_setup_error('Права private/deploy-config.php должны быть 600.');
-}
-
 if (isset($_SESSION['authenticated'], $_SESSION['last_activity'])
     && $_SESSION['authenticated'] === true
     && is_int($_SESSION['last_activity'])
