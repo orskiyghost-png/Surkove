@@ -5,9 +5,6 @@ dist/
 .env
 .env.*
 !.env.example
-**/deploy-config.php
-**/private/
-LOCAL_ONLY_DO_NOT_COMMIT/
 *.pem
 *.key
 *.p12
