@@ -19,6 +19,11 @@ export default function HomePage() {
           lightMode
         />
       </div>
+
+      <div className="home-page__glass" aria-hidden="true">
+        <div className="home-page__glass-blur" />
+        <div className="home-page__glass-wash" />
+      </div>
     </main>
   );
 }
