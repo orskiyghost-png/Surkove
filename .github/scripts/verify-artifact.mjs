@@ -7,12 +7,12 @@ if (!lstatSync(root, { throwIfNoEntry: false })?.isDirectory() || !lstatSync(ind
   throw new Error('Production artifact must contain dist/index.html');
 }
 
-const blockedName = /^(?:\.env(?:\..*)?|\.npmrc|deploy-config\.php|.*\.(?:pem|key|p12|sqlite|sqlite3|db))$/i;
+const blockedName = /^(?:\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|sqlite|sqlite3|db|php\d*|phtml|phar|cgi|pl|py|sh|htaccess|htpasswd))$/i;
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
-  /\b(?:FTP_PASSWORD|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)\s*[:=]\s*[^\s"']{8,}/i,
+  /\b(?:FTP_PASSWORD|FTP_USERNAME|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)\s*[:=]\s*[^\s"']{8,}/i,
 ];
 const files = [];
 function walk(directory) {

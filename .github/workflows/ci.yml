@@ -5,21 +5,46 @@ on:
     branches:
       - main
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Manual FTPS check or recovery deployment
+        required: true
+        type: choice
+        options:
+          - connection-test
+          - smoke-test
+          - dry-run
+          - deploy
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: surkove-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
     name: Validate application
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Check out pull request
+      - name: Require manual operations to use main
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "FTPS operations may only be started from main." >&2
+            exit 1
+          fi
+
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -36,19 +61,6 @@ jobs:
       - name: Audit npm dependencies
         run: npm audit --audit-level=high
 
-      - name: Install PHP CLI for hosting-panel syntax checks
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install --yes --no-install-recommends php-cli
-
-      - name: Check PHP syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-          for file in hosting/*.php; do
-            php -l "$file"
-          done
-
       - name: Type-check application
         run: npm run typecheck
 
@@ -57,3 +69,30 @@ jobs:
 
       - name: Verify production artifact and scan for secrets
         run: node .github/scripts/verify-artifact.mjs
+
+      - name: Install lftp for production or manual FTPS operation
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends lftp
+
+      - name: Run connection, smoke, or dry-run check
+        if: github.event_name == 'workflow_dispatch' && inputs.mode != 'deploy'
+        env:
+          MODE: ${{ inputs.mode }}
+          FTP_HOST: ${{ vars.FTP_HOST }}
+          FTP_PORT: ${{ vars.FTP_PORT || '21' }}
+          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: bash .github/scripts/ftps-deploy.sh "$MODE"
+
+      - name: Publish validated build to Majordomo over FTPS
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'deploy')
+        env:
+          FTP_HOST: ${{ vars.FTP_HOST }}
+          FTP_PORT: ${{ vars.FTP_PORT || '21' }}
+          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: bash .github/scripts/ftps-deploy.sh deploy

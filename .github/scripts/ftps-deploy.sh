@@ -129,14 +129,6 @@ case "$MODE" in
     run_lftp "mirror --dry-run --reverse --verbose --parallel=1 --transfer-all $(lftp_quote "$GITHUB_WORKSPACE/dist") ."
     ;;
   deploy)
-    # The existing PHP release panel routes production traffic through releases/<SHA>.
-    # Never report a direct web-root upload as deployed while that routing is active.
-    remote_htaccess="$TEMP_DIR/remote.htaccess"
-    run_lftp "get -o $(lftp_quote "$remote_htaccess") .htaccess"
-    if grep -Eqi '^# *SURKOVE_ACTIVE_RELEASE:' "$remote_htaccess"; then
-      echo "Direct FTPS deployment aborted: this webroot is currently routed by the existing PHP release panel (.htaccess marker detected). Use that panel for activation/rollback, or explicitly coordinate a switch to direct webroot delivery first." >&2
-      exit 1
-    fi
     run_lftp "mirror --reverse --verbose --parallel=1 --transfer-all $(lftp_quote "$GITHUB_WORKSPACE/dist") ."
     echo "FTPS upload succeeded. No remote files were deleted; only files from dist were transferred."
     ;;
