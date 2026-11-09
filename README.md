@@ -41,16 +41,18 @@ Only the contents of `dist/` are transferred. No remote delete option is used. E
 
 The upload updates files in place and is not an atomic release switch. If a transfer fails mid-deployment, the web root can temporarily contain a mixture of old and new files. A retry republishes the validated build; the workflow does not perform database migrations.
 
+Before the first direct-root publication, inspect the current Majordomo `.htaccess`. If it contains the old `SURKOVE_ACTIVE_RELEASE` marker or rewrites requests into `releases/<SHA>`, back it up and remove or adjust only those old panel routing rules; preserve unrelated hosting and security rules. FTPS intentionally does not overwrite `.htaccess`, so leaving the old release rewrite active would continue serving the previous release even after `dist/` was uploaded. After confirming the public site serves the direct static root, remove the old panel files (`www/deploy.php`, `www/check-deploy.php`, and the sibling `private/deploy-config.php`, if present). Keep the old `www/releases/` tree until the new site has been verified; it is not used by this workflow, and any later cleanup should be a deliberate, separately reviewed server operation.
+
 ## Rollback
 
 Use Git rather than rewriting history: create a **Revert** Pull Request for the change that introduced the unwanted site version, merge it into `main`, and let CI rebuild and publish the reverted source. The deploy workflow does not force-push, reset, or rewrite Git history. To restore a specific earlier state, revert the relevant commit(s) and merge the revert PR.
 
 ## Main branch protection
 
-The `main` branch should require the successful GitHub Actions check **Validate application** before merge and disallow force pushes and branch deletion. This setting is managed in GitHub repository rules/branch protection, not in the application code. The check must be selected after it has appeared on a PR.
+The `main` branch is configured to require the successful GitHub Actions check **Validate application**, require the branch to be up to date, enforce the rule for administrators, and disallow force pushes and branch deletion. Pull-request review approval is not additionally required by this setting.
 
 ## Majordomo prerequisites and verification
 
-The repository cannot establish account-specific FTPS host, port, remote directory, certificate, or passive-data connectivity. Confirm those values in Majordomo before enabling a merge that should publish. The local/CI build passing does not prove that the hosting account serves the configured directory or that FTPS works. Do not consider production deployment verified until the connection test, write/read/delete smoke test, dry-run, and a separately authorized real publication have succeeded.
+The repository cannot establish account-specific FTPS host, port, remote directory, certificate, or passive-data connectivity. Confirm those values in Majordomo before merging a change that should publish. The local/CI build passing does not prove that the hosting account serves the configured directory or that FTPS works. Do not consider production deployment verified until the connection test, write/read/delete smoke test, dry-run, and a separately authorized real publication have succeeded.
 
 Product imagery and the licensed Monroe font are intentionally not included yet.
