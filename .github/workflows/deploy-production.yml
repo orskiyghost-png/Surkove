@@ -1,0 +1,74 @@
+name: Majordomo FTPS deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Operation to run
+        required: true
+        type: choice
+        options:
+          - connection-test
+          - smoke-test
+          - dry-run
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surkove-majordomo-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and run FTPS ${{ inputs.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require manual run from main
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != "workflow_dispatch" || "$REF" != "refs/heads/main" ]]; then
+            echo "This production workflow must be manually started from main." >&2
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build production site
+        run: npm run build
+
+      - name: Validate production artifact and scan for secrets
+        run: node .github/scripts/verify-artifact.mjs
+
+      - name: Install lftp
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends lftp
+
+      - name: Run selected FTPS operation
+        env:
+          MODE: ${{ inputs.mode }}
+          FTP_HOST: ${{ vars.FTP_HOST }}
+          FTP_PORT: ${{ vars.FTP_PORT || '21' }}
+          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: bash .github/scripts/ftps-deploy.sh "$MODE"
