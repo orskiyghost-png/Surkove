@@ -8,17 +8,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: Manual FTPS check or recovery deployment
-        required: true
-        type: choice
-        options:
-          - connection-test
-          - smoke-test
-          - dry-run
-          - deploy
 
 permissions:
   contents: read
@@ -32,18 +21,9 @@ jobs:
     name: Validate application
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - name: Require manual operations to use main
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          REF: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-          if [[ "$REF" != "refs/heads/main" ]]; then
-            echo "FTPS operations may only be started from main." >&2
-            exit 1
-          fi
-
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,37 +50,105 @@ jobs:
       - name: Verify production artifact and scan for secrets
         run: node .github/scripts/verify-artifact.mjs
 
-      - name: Install lftp for production or manual FTPS operation
-        if: (github.event_name == 'workflow_dispatch' && inputs.mode != 'deploy') || (vars.PRODUCTION_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy')))
+  publish:
+    name: Publish build and update Majordomo
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rebuild the exact main revision
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install --yes --no-install-recommends lftp
+          set -euo pipefail
+          npm ci
+          npm audit --audit-level=high
+          npm run typecheck
+          npm run build
+          node .github/scripts/verify-artifact.mjs
 
-      - name: Run connection, smoke, or dry-run check
-        if: github.event_name == 'workflow_dispatch' && inputs.mode != 'deploy'
+      - name: Publish build to deploy branch without rewriting history
+        id: publish_build
         env:
-          MODE: ${{ inputs.mode }}
-          FTP_HOST: ${{ vars.FTP_HOST }}
-          FTP_PORT: ${{ vars.FTP_PORT || '21' }}
-          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: bash .github/scripts/ftps-deploy.sh "$MODE"
+          SOURCE_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          askpass="$RUNNER_TEMP/surkove-git-askpass.sh"
+          cat > "$askpass" <<'ASKPASS'
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "$GH_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass"
+          export GIT_TERMINAL_PROMPT=0
+          trap 'rm -f "$askpass"' EXIT
 
-      - name: Skip automatic publication because it is disabled
-        if: github.event_name == 'push' && vars.PRODUCTION_DEPLOY_ENABLED != 'true'
-        run: echo "Production publication skipped; set repository variable PRODUCTION_DEPLOY_ENABLED to true to enable it."
+          worktree="$RUNNER_TEMP/surkove-deploy-worktree"
+          git fetch --no-tags origin refs/heads/deploy:refs/remotes/origin/deploy
+          git worktree add --detach "$worktree" refs/remotes/origin/deploy
 
-      - name: Skip manual publication because it is disabled
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy' && vars.PRODUCTION_DEPLOY_ENABLED != 'true'
-        run: echo "Manual publication skipped; set repository variable PRODUCTION_DEPLOY_ENABLED to true to enable it."
+          # The deploy branch is the generated public artifact, not the source repository.
+          find "$worktree" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
+          cp -a dist/. "$worktree/"
+          printf '{"source_sha":"%s"}\n' "$SOURCE_SHA" > "$worktree/.surkove-build.json"
 
-      - name: Publish validated build to Majordomo over FTPS
-        if: vars.PRODUCTION_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'deploy'))
+          git -C "$worktree" config user.name "github-actions[bot]"
+          git -C "$worktree" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$worktree" add -A
+          if ! git -C "$worktree" diff --cached --quiet; then
+            git -C "$worktree" commit -m "Publish ${SOURCE_SHA}"
+            git -C "$worktree" push origin HEAD:refs/heads/deploy
+          else
+            echo "The deploy artifact is unchanged."
+          fi
+          echo "deploy_sha=$(git -C "$worktree" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Notify update.php with signed request
         env:
-          FTP_HOST: ${{ vars.FTP_HOST }}
-          FTP_PORT: ${{ vars.FTP_PORT || '21' }}
-          FTP_REMOTE_DIR: ${{ vars.FTP_REMOTE_DIR }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: bash .github/scripts/ftps-deploy.sh deploy
+          UPDATE_URL: ${{ vars.MAJORDOMO_UPDATE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.MAJORDOMO_WEBHOOK_SECRET }}
+          DEPLOY_SHA: ${{ steps.publish_build.outputs.deploy_sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UPDATE_URL" || -z "$WEBHOOK_SECRET" ]]; then
+            echo "::warning::Automatic update.php notification is not configured; use the protected update page manually."
+            exit 0
+          fi
+          if [[ "$UPDATE_URL" != https://* ]]; then
+            echo "::error::MAJORDOMO_UPDATE_URL must use HTTPS."
+            exit 1
+          fi
+          if [[ ! "$UPDATE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/update\.php\?hook=1$ ]]; then
+            echo "::error::MAJORDOMO_UPDATE_URL must be the HTTPS /update.php?hook=1 endpoint."
+            exit 1
+          fi
+          payload="$(jq -cn \
+            --arg repo 'orskiyghost-png/Surkove' \
+            --arg ref 'refs/heads/deploy' \
+            --arg after "$DEPLOY_SHA" \
+            '{ref:$ref,after:$after,deleted:false,repository:{full_name:$repo}}')"
+          signature="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -hex | awk '{print $NF}')"
+          curl --fail --silent --show-error --max-time 90 --retry 2 --retry-all-errors \
+            --header 'Content-Type: application/json' \
+            --header 'X-GitHub-Event: push' \
+            --header "X-Hub-Signature-256: sha256=$signature" \
+            --data-binary "$payload" \
+            "$UPDATE_URL"

@@ -18,7 +18,7 @@ export default function HomePage() {
               <span aria-hidden="true">↘</span>
             </a>
           </div>
-          <div className="hero-visual" aria-label="Место для визуального фона">
+          <div className="hero-visual">
             <span className="visual-index">01 / 01</span>
             <span className="visual-caption">Визуальный образ</span>
           </div>
@@ -32,7 +32,7 @@ export default function HomePage() {
               Каталог
             </h2>
           </div>
-          <div className="placeholder-grid" aria-label="Место для каталога">
+          <div className="placeholder-grid">
             <div className="placeholder placeholder-tall">
               <span>Место для каталога</span>
             </div>
@@ -56,7 +56,7 @@ export default function HomePage() {
               Фотографии
             </h2>
           </div>
-          <div className="photo-placeholder" aria-label="Место для фотографий">
+          <div className="photo-placeholder">
             <span>Место для фотографий</span>
           </div>
         </section>
