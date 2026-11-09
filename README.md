@@ -16,7 +16,7 @@ There are no application runtime dependencies on PHP, Composer, a database, or s
 
 ## CI and automatic publication
 
-The `CI` workflow runs on pull requests targeting `main` and on pushes to `main`. It installs the locked npm dependencies, audits packages, type-checks the application, builds the production site, and scans `dist/` for blocked configuration and known secret formats. On a push to `main`, FTPS publication runs only after those validation steps pass. Pull-request jobs do not receive FTP credentials.
+The `CI` workflow runs on pull requests targeting `main` and on pushes to `main`. It installs the locked npm dependencies, audits packages, type-checks the application, builds the production site, and scans `dist/` for blocked configuration and known secret formats. On a push to `main`, FTPS publication runs only after those validation steps pass and only when repository variable `PRODUCTION_DEPLOY_ENABLED` is exactly `true`; when it is absent or false, CI succeeds and explicitly skips publication. Pull-request jobs do not receive FTP credentials.
 
 To enable this process, create these repository settings under **Settings → Secrets and variables → Actions**:
 
@@ -27,13 +27,14 @@ To enable this process, create these repository settings under **Settings → Se
 
 **Variables**
 
+- `PRODUCTION_DEPLOY_ENABLED` — set to `false` to keep publication disabled; change to `true` only when production deployment is authorized
 - `FTP_HOST`
 - `FTP_REMOTE_DIR` — the actual website document root as seen after FTP login
 - `FTP_PORT` — optional; defaults to `21`
 
 Use the Majordomo FTPS hostname and explicit FTP-over-TLS service. The workflow requires certificate validation, TLS-protected control and data connections, and passive mode. It never falls back to plain FTP, SSH, or SFTP.
 
-After the workflow is present on the repository's default branch, manual checks are available from **Actions → CI → Run workflow** on `main`: `connection-test` checks TLS, authentication and the configured directory; `smoke-test` creates a unique temporary file, reads it back and removes it; `dry-run` previews the transfer; `deploy` manually republishes the already validated build. The automatic `push` to `main` path performs the deployment after validation.
+After the workflow is present on the repository's default branch, manual checks are available from **Actions → CI → Run workflow** on `main`: `connection-test` checks TLS, authentication and the configured directory; `smoke-test` creates a unique temporary file, reads it back and removes it; `dry-run` previews the transfer. These three checks work regardless of `PRODUCTION_DEPLOY_ENABLED`. Manual `deploy` and automatic publication on push to `main` both require the variable to be exactly `true`; otherwise the workflow succeeds without publishing.
 
 ## Remote-file safety
 

@@ -71,7 +71,7 @@ jobs:
         run: node .github/scripts/verify-artifact.mjs
 
       - name: Install lftp for production or manual FTPS operation
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'workflow_dispatch' && inputs.mode != 'deploy') || (vars.PRODUCTION_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy')))
         run: |
           sudo apt-get update -qq
           sudo apt-get install --yes --no-install-recommends lftp
@@ -87,8 +87,16 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: bash .github/scripts/ftps-deploy.sh "$MODE"
 
+      - name: Skip automatic publication because it is disabled
+        if: github.event_name == 'push' && vars.PRODUCTION_DEPLOY_ENABLED != 'true'
+        run: echo "Production publication skipped; set repository variable PRODUCTION_DEPLOY_ENABLED to true to enable it."
+
+      - name: Skip manual publication because it is disabled
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy' && vars.PRODUCTION_DEPLOY_ENABLED != 'true'
+        run: echo "Manual publication skipped; set repository variable PRODUCTION_DEPLOY_ENABLED to true to enable it."
+
       - name: Publish validated build to Majordomo over FTPS
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'deploy')
+        if: vars.PRODUCTION_DEPLOY_ENABLED == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'deploy'))
         env:
           FTP_HOST: ${{ vars.FTP_HOST }}
           FTP_PORT: ${{ vars.FTP_PORT || '21' }}
